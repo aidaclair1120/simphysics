@@ -1,6 +1,7 @@
 import "./styles.css";
 
 import { World } from "./ecs/World.js";
+import type { WorldSnapshot } from "./ecs/World.js";
 import { createBattery, createLamp, createResistor, createWire } from "./electrical/factories.js";
 import { solveDC } from "./electrical/analysis.js";
 import type { EntityId, TerminalRef, Vector2 } from "./ecs/types.js";
@@ -13,6 +14,24 @@ if (!app) throw new Error("Missing #app");
 const world = new World();
 const positions = new Map<EntityId, Vector2>();
 let nextX = 120;
+
+let selected: EntityId | null = null;
+let draggingEntity = false;
+let wiringFrom: TerminalRef | null = null;
+let pointer: Vector2 = { x: 0, y: 0 };
+let dragOffset: Vector2 = { x: 0, y: 0 };
+let dragStartSnapshot: EditorSnapshot | null = null;
+let dragMoved = false;
+let lastSolution = solveDC(world);
+
+interface EditorSnapshot {
+  world: WorldSnapshot;
+  positions: Map<EntityId, Vector2>;
+  nextX: number;
+}
+
+const undoStack: EditorSnapshot[] = [];
+const redoStack: EditorSnapshot[] = [];
 
 const battery = createBattery(world, 9);
 const resistor = createResistor(world, 100);
@@ -28,6 +47,8 @@ connectWithExistingWire(battery, "positive", resistor, "A");
 connectWithExistingWire(resistor, "B", lamp, "A");
 connectWithExistingWire(lamp, "B", battery, "negative");
 
+undoStack.push(captureSnapshot());
+
 app.innerHTML = `
   <main class="shell">
     <header>
@@ -41,6 +62,9 @@ app.innerHTML = `
 
     <section class="panel">
       <div class="toolbar">
+        <button id="undo" disabled>Undo</button>
+        <button id="redo" disabled>Redo</button>
+        <button id="add-battery">Add battery</button>
         <button id="add-resistor">Add resistor</button>
         <button id="add-lamp">Add lamp</button>
         <button id="delete">Delete selected</button>
@@ -52,6 +76,7 @@ app.innerHTML = `
         <span><b>Wire:</b> drag from a terminal to another terminal</span>
         <span><b>Reattach:</b> select a wire, then drag its endpoint to a terminal</span>
         <span><b>Delete:</b> select any object and press Delete or use the button</span>
+        <span><b>Undo/Redo:</b> Ctrl+Z / Ctrl+Y</span>
         <span><b>Simulation:</b> updates automatically whenever the circuit changes</span>
       </div>
       <canvas id="canvas" width="820" height="470"></canvas>
@@ -74,17 +99,71 @@ const ctx = canvas.getContext("2d")!;
 const results = document.querySelector<HTMLDivElement>("#results")!;
 const topology = document.querySelector<HTMLPreElement>("#topology")!;
 const message = document.querySelector<HTMLSpanElement>("#message")!;
+const undoButton = document.querySelector<HTMLButtonElement>("#undo")!;
+const redoButton = document.querySelector<HTMLButtonElement>("#redo")!;
 const deleteButton = document.querySelector<HTMLButtonElement>("#delete")!;
-
-let selected: EntityId | null = null;
-let draggingEntity = false;
-let wiringFrom: TerminalRef | null = null;
-let pointer: Vector2 = { x: 0, y: 0 };
-let dragOffset: Vector2 = { x: 0, y: 0 };
-let lastSolution = solveDC(world);
 
 function ref(entityId: EntityId, terminalId: string): TerminalRef {
   return { entityId, terminalId };
+}
+
+function captureSnapshot(): EditorSnapshot {
+  return {
+    world: world.createSnapshot(),
+    positions: new Map([...positions.entries()].map(([id, position]) => [id, { ...position }])),
+    nextX
+  };
+}
+
+function recordBeforeChange(): void {
+  undoStack.push(captureSnapshot());
+  redoStack.length = 0;
+  updateHistoryButtons();
+}
+
+function restoreEditorSnapshot(snapshot: EditorSnapshot): void {
+  world.restoreSnapshot(snapshot.world);
+
+  positions.clear();
+  for (const [entityId, position] of snapshot.positions) {
+    positions.set(entityId, { ...position });
+  }
+
+  nextX = snapshot.nextX;
+  selected = null;
+  wiringFrom = null;
+  draggingEntity = false;
+  dragStartSnapshot = null;
+  dragMoved = false;
+
+  simulate();
+}
+
+function undo(): void {
+  if (undoStack.length <= 1) return;
+
+  const current = captureSnapshot();
+  const previous = undoStack.pop()!;
+  redoStack.push(current);
+  restoreEditorSnapshot(previous);
+  message.textContent = "Undid last change.";
+  updateHistoryButtons();
+}
+
+function redo(): void {
+  if (redoStack.length === 0) return;
+
+  const current = captureSnapshot();
+  const next = redoStack.pop()!;
+  undoStack.push(current);
+  restoreEditorSnapshot(next);
+  message.textContent = "Redid last change.";
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons(): void {
+  undoButton.disabled = undoStack.length <= 1;
+  redoButton.disabled = redoStack.length === 0;
 }
 
 function simulate(): void {
@@ -115,6 +194,8 @@ function createWireBetweenTerminals(start: TerminalRef, end: TerminalRef): void 
     return;
   }
 
+  recordBeforeChange();
+
   const wire = createWire(world);
 
   const startPosition = terminalScreenPosition(start.entityId, start.terminalId);
@@ -137,6 +218,8 @@ function reattachWireEndpoint(wireTerminal: TerminalRef, target: TerminalRef): v
     message.textContent = "Cannot connect a wire endpoint to itself.";
     return;
   }
+
+  recordBeforeChange();
 
   const endpoint = world.getTerminal(wireTerminal.entityId, wireTerminal.terminalId);
 
@@ -327,6 +410,8 @@ canvas.addEventListener("pointerdown", event => {
   if (selected !== null && entityKind(selected) !== "wire") {
     const p = positions.get(selected)!;
     dragOffset = { x: pointer.x - p.x, y: pointer.y - p.y };
+    dragStartSnapshot = captureSnapshot();
+    dragMoved = false;
     draggingEntity = true;
     canvas.setPointerCapture(event.pointerId);
     message.textContent = `Moving entity ${selected}`;
@@ -352,10 +437,16 @@ canvas.addEventListener("pointermove", event => {
   }
 
   if (draggingEntity && selected !== null) {
-    positions.set(selected, {
+    const nextPosition = {
       x: pointer.x - dragOffset.x,
       y: pointer.y - dragOffset.y
-    });
+    };
+    const currentPosition = positions.get(selected)!;
+    if (nextPosition.x !== currentPosition.x || nextPosition.y !== currentPosition.y) {
+      dragMoved = true;
+    }
+
+    positions.set(selected, nextPosition);
 
     // Connected wire endpoints follow the terminal they are attached to.
     syncConnectedWireEndpoints(selected);
@@ -387,7 +478,15 @@ canvas.addEventListener("pointerup", event => {
     return;
   }
 
+  if (draggingEntity && dragMoved && dragStartSnapshot) {
+    undoStack.push(dragStartSnapshot);
+    redoStack.length = 0;
+    updateHistoryButtons();
+  }
+
   draggingEntity = false;
+  dragStartSnapshot = null;
+  dragMoved = false;
   if (canvas.hasPointerCapture(event.pointerId)) {
     canvas.releasePointerCapture(event.pointerId);
   }
@@ -398,12 +497,43 @@ canvas.addEventListener("pointerup", event => {
 canvas.addEventListener("contextmenu", event => event.preventDefault());
 
 window.addEventListener("keydown", event => {
-  if (event.key === "Delete") deleteSelectedEntity();
+  if (event.key === "Delete") {
+    event.preventDefault();
+    deleteSelectedEntity();
+    return;
+  }
+
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    if (event.shiftKey) redo();
+    else undo();
+    return;
+  }
+
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+    event.preventDefault();
+    redo();
+  }
 });
 
+undoButton.addEventListener("click", undo);
+redoButton.addEventListener("click", redo);
 deleteButton.addEventListener("click", deleteSelectedEntity);
 
+document.querySelector<HTMLButtonElement>("#add-battery")!.addEventListener("click", () => {
+  recordBeforeChange();
+  const entity = createBattery(world, 9);
+  positions.set(entity, { x: nextX, y: 250 });
+  nextX += 90;
+  if (nextX > 740) nextX = 120;
+  selected = entity;
+  message.textContent = `Added battery entity ${entity}.`;
+  updateDeleteButton();
+  simulate();
+});
+
 document.querySelector<HTMLButtonElement>("#add-resistor")!.addEventListener("click", () => {
+  recordBeforeChange();
   const entity = createResistor(world, 100);
   positions.set(entity, { x: nextX, y: 100 });
   nextX += 90;
@@ -415,6 +545,7 @@ document.querySelector<HTMLButtonElement>("#add-resistor")!.addEventListener("cl
 });
 
 document.querySelector<HTMLButtonElement>("#add-lamp")!.addEventListener("click", () => {
+  recordBeforeChange();
   const entity = createLamp(world, 60, 1);
   positions.set(entity, { x: nextX, y: 390 });
   nextX += 90;
@@ -442,11 +573,14 @@ function deleteSelectedEntity(): void {
     return;
   }
 
+  recordBeforeChange();
   world.destroyEntity(entity);
   positions.delete(entity);
   selected = null;
   wiringFrom = null;
   draggingEntity = false;
+  dragStartSnapshot = null;
+  dragMoved = false;
   message.textContent = `Deleted entity ${entity}.`;
   updateDeleteButton();
   simulate();
@@ -485,6 +619,7 @@ function renderSimulation(): void {
 
   updateTopology();
   updateDeleteButton();
+  updateHistoryButtons();
   redraw();
 }
 
@@ -626,6 +761,8 @@ function redraw(): void {
   }
 }
 
+lastSolution = solveDC(world);
 renderSimulation();
 updateDeleteButton();
+updateHistoryButtons();
 redraw();
