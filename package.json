@@ -1,0 +1,17 @@
+{
+  "name": "sim-hsc-physics",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "test": "tsc && node --test dist/test/*.test.js",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^7.1.3"
+  }
+}
