@@ -72,6 +72,19 @@ function key(ref: TerminalRef): string {
   return `${ref.entityId}:${ref.terminalId}`;
 }
 
+function clearElectricalStates(world: World): void {
+  // A circuit change can make the previous solution invalid. Keep the
+  // derived ElectricalState components present, but reset them so the UI
+  // never displays stale voltage/current/power from an earlier solution.
+  for (const entityId of world.getEntitiesWith("ElectricalState")) {
+    world.addComponent<ElectricalState>(entityId, "ElectricalState", {
+      voltage: 0,
+      current: 0,
+      power: 0
+    });
+  }
+}
+
 export function deriveNodes(world: World): ElectricalNode[] {
   const uf = makeUnionFind();
   const allTerminals: TerminalRef[] = [];
@@ -162,6 +175,11 @@ function gaussianSolve(matrix: number[][], rhs: number[]): number[] | null {
  * representations used only for solving.
  */
 export function solveDC(world: World): DCSolution {
+  // Always clear derived results first. This is important when a previously
+  // solved circuit is disconnected or an entity such as the original battery
+  // is deleted and the new circuit can no longer be solved.
+  clearElectricalStates(world);
+
   const nodes = deriveNodes(world);
 
   const resistors: Array<{
