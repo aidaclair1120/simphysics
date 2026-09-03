@@ -52,7 +52,7 @@ app.innerHTML = `
         <span><b>Wire:</b> drag from a terminal to another terminal</span>
         <span><b>Reattach:</b> select a wire, then drag its endpoint to a terminal</span>
         <span><b>Delete:</b> select any object and press Delete or use the button</span>
-        <span><b>Simulation:</b> updates automatically when the circuit changes</span>
+        <span><b>Simulation:</b> updates automatically whenever the circuit changes</span>
       </div>
       <canvas id="canvas" width="820" height="470"></canvas>
     </section>
@@ -85,6 +85,11 @@ let lastSolution = solveDC(world);
 
 function ref(entityId: EntityId, terminalId: string): TerminalRef {
   return { entityId, terminalId };
+}
+
+function simulate(): void {
+  lastSolution = solveDC(world);
+  renderSimulation();
 }
 
 function connectWithExistingWire(
@@ -124,6 +129,7 @@ function createWireBetweenTerminals(start: TerminalRef, end: TerminalRef): void 
 
   selected = wire;
   message.textContent = `Created wire entity ${wire}.`;
+  simulate();
 }
 
 function reattachWireEndpoint(wireTerminal: TerminalRef, target: TerminalRef): void {
@@ -145,6 +151,7 @@ function reattachWireEndpoint(wireTerminal: TerminalRef, target: TerminalRef): v
 
   selected = wireTerminal.entityId;
   message.textContent = `Reattached wire ${wireTerminal.entityId}:${wireTerminal.terminalId} to ${target.entityId}:${target.terminalId}.`;
+  simulate();
 }
 
 function setWireTerminalPosition(
@@ -368,7 +375,6 @@ canvas.addEventListener("pointerup", event => {
       } else {
         createWireBetweenTerminals(wiringFrom, destination);
       }
-      solveAndRender();
     } else {
       message.textContent = "Connection cancelled.";
     }
@@ -405,8 +411,7 @@ document.querySelector<HTMLButtonElement>("#add-resistor")!.addEventListener("cl
   selected = entity;
   message.textContent = `Added resistor entity ${entity}.`;
   updateDeleteButton();
-  redraw();
-  solveAndRender();
+  simulate();
 });
 
 document.querySelector<HTMLButtonElement>("#add-lamp")!.addEventListener("click", () => {
@@ -417,8 +422,7 @@ document.querySelector<HTMLButtonElement>("#add-lamp")!.addEventListener("click"
   selected = entity;
   message.textContent = `Added lamp entity ${entity}.`;
   updateDeleteButton();
-  redraw();
-  solveAndRender();
+  simulate();
 });
 
 document.querySelector<HTMLButtonElement>("#reset")!.addEventListener("click", () => {
@@ -445,7 +449,7 @@ function deleteSelectedEntity(): void {
   draggingEntity = false;
   message.textContent = `Deleted entity ${entity}.`;
   updateDeleteButton();
-  solveAndRender();
+  simulate();
 }
 
 function updateDeleteButton(): void {
@@ -456,9 +460,7 @@ function sameTerminal(a: TerminalRef, b: TerminalRef): boolean {
   return a.entityId === b.entityId && a.terminalId === b.terminalId;
 }
 
-function solveAndRender(): void {
-  lastSolution = solveDC(world);
-
+function renderSimulation(): void {
   if (!lastSolution.solved) {
     results.innerHTML = `<p class="error">${lastSolution.error ?? "Unable to solve."}</p>`;
   } else {
@@ -624,6 +626,6 @@ function redraw(): void {
   }
 }
 
-updateTopology();
+renderSimulation();
 updateDeleteButton();
-solveAndRender();
+redraw();
