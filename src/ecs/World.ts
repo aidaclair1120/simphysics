@@ -2,6 +2,11 @@ import type { ComponentType, EntityId, TerminalId, TerminalRef } from "./types.j
 import type { Terminal } from "../electrical/Terminal.js";
 import type { Electrical } from "../electrical/components/Electrical.js";
 
+export interface WorldSnapshot {
+  nextEntityId: number;
+  components: Map<ComponentType, Map<EntityId, unknown>>;
+}
+
 export class World {
   private nextEntityId = 1;
   private readonly components = new Map<ComponentType, Map<EntityId, unknown>>();
@@ -22,6 +27,24 @@ export class World {
     }
 
     for (const store of this.components.values()) store.delete(entityId);
+  }
+
+  /** Capture a deep snapshot of the ECS state for editor undo/redo. */
+  createSnapshot(): WorldSnapshot {
+    return {
+      nextEntityId: this.nextEntityId,
+      components: structuredClone(this.components)
+    };
+  }
+
+  /** Restore a previously captured ECS snapshot. */
+  restoreSnapshot(snapshot: WorldSnapshot): void {
+    this.nextEntityId = snapshot.nextEntityId;
+    this.components.clear();
+
+    for (const [type, store] of snapshot.components) {
+      this.components.set(type, structuredClone(store));
+    }
   }
 
   addComponent<T>(entityId: EntityId, type: ComponentType, component: T): void {
