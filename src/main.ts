@@ -41,7 +41,6 @@ app.innerHTML = `
 
     <section class="panel">
       <div class="toolbar">
-        <button id="solve">Solve</button>
         <button id="add-resistor">Add resistor</button>
         <button id="add-lamp">Add lamp</button>
         <button id="delete">Delete selected</button>
@@ -53,6 +52,7 @@ app.innerHTML = `
         <span><b>Wire:</b> drag from a terminal to another terminal</span>
         <span><b>Reattach:</b> select a wire, then drag its endpoint to a terminal</span>
         <span><b>Delete:</b> select any object and press Delete or use the button</span>
+        <span><b>Simulation:</b> updates automatically when the circuit changes</span>
       </div>
       <canvas id="canvas" width="820" height="470"></canvas>
     </section>
@@ -397,8 +397,6 @@ window.addEventListener("keydown", event => {
 
 deleteButton.addEventListener("click", deleteSelectedEntity);
 
-document.querySelector<HTMLButtonElement>("#solve")!.addEventListener("click", solveAndRender);
-
 document.querySelector<HTMLButtonElement>("#add-resistor")!.addEventListener("click", () => {
   const entity = createResistor(world, 100);
   positions.set(entity, { x: nextX, y: 100 });
@@ -408,6 +406,7 @@ document.querySelector<HTMLButtonElement>("#add-resistor")!.addEventListener("cl
   message.textContent = `Added resistor entity ${entity}.`;
   updateDeleteButton();
   redraw();
+  solveAndRender();
 });
 
 document.querySelector<HTMLButtonElement>("#add-lamp")!.addEventListener("click", () => {
@@ -627,4 +626,4 @@ function redraw(): void {
 
 updateTopology();
 updateDeleteButton();
-redraw();
+solveAndRender();
