@@ -12,7 +12,6 @@ if (!app) throw new Error("Missing #app");
 
 const world = new World();
 const positions = new Map<EntityId, Vector2>();
-const userCreatedWires = new Set<EntityId>();
 let nextX = 120;
 
 const battery = createBattery(world, 9);
@@ -23,8 +22,8 @@ positions.set(battery, { x: 110, y: 210 });
 positions.set(resistor, { x: 300, y: 210 });
 positions.set(lamp, { x: 500, y: 210 });
 
-// Initial puzzle wires are fixed/pre-existing. Their endpoints are positioned
-// exactly on the terminals they connect to.
+// The initial circuit uses ordinary editable wire entities. They are not
+// special or protected; free-play should allow every entity to be edited.
 connectWithExistingWire(battery, "positive", resistor, "A");
 connectWithExistingWire(resistor, "B", lamp, "A");
 connectWithExistingWire(lamp, "B", battery, "negative");
@@ -45,7 +44,7 @@ app.innerHTML = `
         <button id="solve">Solve</button>
         <button id="add-resistor">Add resistor</button>
         <button id="add-lamp">Add lamp</button>
-        <button id="delete">Delete selected wire</button>
+        <button id="delete">Delete selected</button>
         <button id="reset">Reset</button>
         <span id="message">Drag components. Drag from a terminal to make a wire.</span>
       </div>
@@ -53,7 +52,7 @@ app.innerHTML = `
         <span><b>Move:</b> drag a component body</span>
         <span><b>Wire:</b> drag from a terminal to another terminal</span>
         <span><b>Reattach:</b> select a wire, then drag its endpoint to a terminal</span>
-        <span><b>Delete:</b> user-created wires only</span>
+        <span><b>Delete:</b> select any object and press Delete or use the button</span>
       </div>
       <canvas id="canvas" width="820" height="470"></canvas>
     </section>
@@ -105,14 +104,13 @@ function connectWithExistingWire(
   return wire;
 }
 
-function createUserWire(start: TerminalRef, end: TerminalRef): void {
+function createWireBetweenTerminals(start: TerminalRef, end: TerminalRef): void {
   if (sameTerminal(start, end)) {
     message.textContent = "A terminal cannot connect to itself.";
     return;
   }
 
   const wire = createWire(world);
-  userCreatedWires.add(wire);
 
   const startPosition = terminalScreenPosition(start.entityId, start.terminalId);
   const endPosition = terminalScreenPosition(end.entityId, end.terminalId);
@@ -368,7 +366,7 @@ canvas.addEventListener("pointerup", event => {
       if (entityKind(wiringFrom.entityId) === "wire") {
         reattachWireEndpoint(wiringFrom, destination);
       } else {
-        createUserWire(wiringFrom, destination);
+        createWireBetweenTerminals(wiringFrom, destination);
       }
       solveAndRender();
     } else {
@@ -394,10 +392,10 @@ canvas.addEventListener("pointerup", event => {
 canvas.addEventListener("contextmenu", event => event.preventDefault());
 
 window.addEventListener("keydown", event => {
-  if (event.key === "Delete") deleteSelectedWire();
+  if (event.key === "Delete") deleteSelectedEntity();
 });
 
-deleteButton.addEventListener("click", deleteSelectedWire);
+deleteButton.addEventListener("click", deleteSelectedEntity);
 
 document.querySelector<HTMLButtonElement>("#solve")!.addEventListener("click", solveAndRender);
 
@@ -428,34 +426,31 @@ document.querySelector<HTMLButtonElement>("#reset")!.addEventListener("click", (
   location.reload();
 });
 
-function deleteSelectedWire(): void {
+function deleteSelectedEntity(): void {
   if (selected === null) {
     message.textContent = "Nothing selected.";
     return;
   }
 
-  if (!world.hasComponent(selected, "Wire")) {
-    message.textContent = "Select a wire to delete.";
+  const entity = selected;
+
+  if (!world.hasComponent(entity, "Electrical")) {
+    message.textContent = "Selected object cannot be deleted.";
     return;
   }
 
-  if (!userCreatedWires.has(selected)) {
-    message.textContent = "Existing puzzle wires cannot be deleted.";
-    return;
-  }
-
-  const wire = selected;
-  world.destroyEntity(wire);
-  positions.delete(wire);
-  userCreatedWires.delete(wire);
+  world.destroyEntity(entity);
+  positions.delete(entity);
   selected = null;
-  message.textContent = `Deleted user-created wire ${wire}.`;
+  wiringFrom = null;
+  draggingEntity = false;
+  message.textContent = `Deleted entity ${entity}.`;
   updateDeleteButton();
   solveAndRender();
 }
 
 function updateDeleteButton(): void {
-  deleteButton.disabled = selected === null || !userCreatedWires.has(selected);
+  deleteButton.disabled = selected === null || !world.hasComponent(selected, "Electrical");
 }
 
 function sameTerminal(a: TerminalRef, b: TerminalRef): boolean {
